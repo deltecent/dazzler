@@ -1,0 +1,1178 @@
+
+; Hand disassembly of the Cromemco Dazzler Graphics Library.
+;
+; Dave Roberts.
+; Thursday 22nd August 2024 18:09.
+; Draft release. A work in progress...
+
+; The following table was extracted by disassembling GDEMO.COM.
+;
+; INITG     14AA - FF2 = L04B8 OK COMMENTED.
+; PAGE      14E0 - FF2 = L04EE OK COMMENTED.
+; CURSOR    14F3 - FF2 = L0501 OK COMMENTED.
+; DOT       1514 - FF2 = L0522 OK
+; LINE      1598 - FF2 = L05A6 OK
+; CHAR      163E - FF2 = L064C 
+; ANIMAT    17C4 - FF2 = L07D2 OK
+; CYCLE     17F4 - FF2 = L0802 OK
+; PAUSE     1828 - FF2 = L0836 OK COMMENTED. SOME STRANGE BEHAVIOUR.
+; AREA      1846 - FF2 = L0854 OK
+; STRING    1887 - FF2 = L0895 OK COMMENTED.
+;
+; VARIABLE USAGE - 
+; TABLES         - 
+
+        ; ******************
+        ; ***            ***
+        ; ***  EQUATES.  ***
+        ; ***            ***
+        ; ******************
+        
+DAZBASE EQU     $0E                 ; BASE I/O PORT FOR THE FIRST/ONLY DAZZLER CARD.
+
+DAZ0E   EQU     DAZBASE+0           ; I/O ADDRESS $0E. FIRST/ONLY DAZZLER CARD. CONTROL REGISTER.
+DAZ0F   EQU     DAZBASE+1           ; I/O ADDRESS $0F. FIRST/ONLY DAZZLER CARD. MODE    REGISTER.
+
+DAZEOF  EQU     $40                 ; DAZZLER I/O PORT $0E END OF FRAME BIT.
+
+        ; ********************
+        ; ***              ***
+        ; ***  MAIN CODE.  ***
+        ; ***              ***
+        ; ********************
+        
+        ORG     $04A9
+        
+L04A9:  LD      A,($0007)           ; HIGH BYTE OF CDOS ENTRY POINT.
+L04AC:  SUB     $11                 ; SOME MAGIC!!!
+        AND     $FE                 ; MAKE SURE TO ALIGN TO A 512 BYTE MEMORY BOUNDARY.
+        LD      (VB1978),A          ; SAVE AWAY?
+        LD      H,A                 ; RETURN THE COMPUTED SCREEN BUFFER ADDRESS.
+        LD      L,0                 ; MAKE SURE THE LOW BYTE IS 0 (REMEMBER, 512 BYTE ALIGNED).
+        JR      L04C8               ; CONTINUE... ($10).
+
+        ; ****************
+        ; ***          ***
+        ; ***  INITG.  ***
+        ; ***          ***
+        ; ****************
+        ;
+        ; Initialise the graphics library (including the Dazzler card).
+        ;
+        ; On entry, HL contains either the desired screen buffer start address or 0.
+        ;
+        ; If HL is 0 on entry, a screen buffer start address will be selected based upon the
+        ; location of CDOS in memory.
+        ;
+        ; On return, HL contains an indication of the 'capabilities' of the available hardware and software.
+        
+INITG:
+
+L04B8:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        LD      A,H                 ; HIGH BYTE OF BUFFER ADDRESS TO A.
+        AND     A                   ; ARE ANY BITS SET OR IS IT ZERO?
+        JR      Z,L04A9             ; IF ZERO, COMPUTE THE SCREEN BUFFER START ADDRESS BASED UPON WHERE THE CDOS ENTRY POINT IS. ($EB).
+        DEC     HL                  ; SUBTRACT 1.
+        LD      A,H                 ; SET A TO THE HIGH BYTE OF THE MODIFED ADDRESS.
+L04C0:  ADD     A,2                 ; ADD 2?
+        AND     $FE                 ; MAKE SURE TO ALIGN TO A 512 BYTE MEMORY BOUNDARY.
+        LD      (VB1978),A          ; SAVE AWAY.
+        LD      H,A                 ; SET H TO THE HIGH BYTE OF THE SCREEN BUFFER ADDRESS.
+L04C8:  XOR     A                   ; SET A TO 0.
+        LD      L,A                 ; LOW BYTE OF SCREEN BUFFER ADDRESS IS ALWAYS 0.
+        LD      (VW1982),HL         ; STORE ADDRESS OF SCREEN BUFFER INTO MEMORY.
+        PUSH    HL                  ; SAVE SCREEN BUFFER ADDRESS ONTO THE STACK.
+        LD      HL,V1984            ; SET HL TO START OF A BLOCK OF VARIABLES.
+        LD      (HL),A              ; SET V1984 TO 0. ANIM FLAG?
+        INC     HL                  ; INCREMENT HL TO V1985.
+        LD      (HL),A              ; SET V1985 TO 0.
+        INC     HL                  ; INCREMENT HL TO V1986.
+        LD      (HL),A              ; SET V1986 TO 0.
+        LD      (VB197B),A          ; SET VB197B TO 0.
+        INC     HL                  ; INCREMENT HL TO V1987.
+        LD      (HL),$0F            ; SET V1987 TO $0F. FONT = PROPORTIONAL.
+        INC     HL                  ; INCREMENT HL TO V1988. 
+        LD      (HL),$FF            ; SET V1988 TO $FF.
+        ;
+        ; NOTE THAT REGISTER A IS 0 HERE. THIS SELECTS THE MAXIMUM DAZZLER RESOLUTION MODE BY DEFAULT.
+        ;
+        CALL    CHAR                ; (163E - FF2 = 64C = CHAR).
+        POP     AF                  ; RECOVER SCREEN BUFFER ADDRESS FROM THE STACK. A = HIGH BYTE THOUGH...
+        SCF                         ; SET THE CARRY FLAG.
+        RRA                         ; SET THE TOP BIT OF REGISTER A FROM THE SET CARRY BIT (DAZZLER ON)...
+                                    ; AND SHIFT THE HIGH BYTE OF THE SCREEN BUFFER ADDRESS TO ALIGN WITH THE DAZZLER HARDWARE.
+        CALL    L0765               ; WRITE TO DAZZLER REGISTER $0E. (1757 - FF2 = 0765).
+        LD      HL,$8AFC            ; DEFAULT RETURNED FLAGS.
+        POP     DE                  ; RECOVER REGISTER PAIR DE FROM THE STACK.
+        POP     AF                  ; RECOVER REGISTER PAIR AF FROM THE STACK.
+L04ED:  RET                         ; RETURN FROM INITG.
+
+        ; ***************
+        ; ***         ***
+        ; ***  PAGE.  ***
+        ; ***         ***
+        ; ***************
+        ;
+        ; Clear the entire screen to BLACK ($00).
+        ;
+        ; Note that 2K of memory is cleared IRRESPECTIVE of the desired mode!
+        
+PAGE:
+
+L04EE:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        LD      HL,(VW1982)         ; START OF SCREEN BUFFER ADDRESS (NOTE: LOW BYTE IS $00).
+        LD      (HL),L              ; SET FIRST BYTE OF SCREEN BUFFER TO $00 (BLACK PIXELS).
+        LD      D,H                 ; SET DE TO THE SAME ADDRESS AS HL.
+        LD      E,L                 ; "  "  "  "  "  "  "  "  "  "  "
+        INC     DE                  ; INCREMENT DE TO POINT TO THE SECOND BYTE OF THE SCREEN BUFFER.
+        LD      BC,$07FF            ; 2K - 1. (MAXIMUM SIZE OF THE DAZZLER SCREEN BUFFER).
+        LDIR                        ; BLOCK COPY (CLEAR THE SCREEN TO BLACK).
+        JP      L053B               ; CONTINUE... RECOVER REGISTERS AND RETURN.
+
+        ; *****************
+        ; ***           ***
+        ; ***  CURSOR.  ***
+        ; ***           ***
+        ; *****************
+        ;
+        ; Set the cursor to the specified position in register pair HL.
+        ;
+        ; Register H contains the desired X coordinate (in the range 0 to 255).
+        ; Register L contains the desired Y coordinate (in the range 0 to 255).
+        ;
+        ; The specified coordinates are in 'virtual' space - and are automatically scaled to
+        ; the display coordinates (depending upon the operating mode of the Dazzler).
+        ;
+        ; Note that for lower resolution modes, the least significant bits of the virtual
+        ; coordinates are ignored.
+        
+CURSOR:
+
+L0501:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        LD      (VW1980),HL         ; STORE THE UNSCALED COORDINATES AWAY.
+        CALL    SCALE               ; SCALE THE SUPPLIED VIRTUAL COORDINATES.
+        LD      (VW1985),HL         ; STORE THE SCALED COORDINATES AWAY.
+        POP     HL                  ; RECOVER REGISTER PAIR HL FROM THE STACK.
+        POP     AF                  ; RECOVER REGISTER PAIR AF FROM THE STACK.
+L050E:  RET                         ; RETURN FROM CURSOR.
+        
+        ; ****************
+        ; ***          ***
+        ; ***  SCALE.  ***
+        ; ***          ***
+        ; ****************
+        
+SCALE:
+
+L050F:  LD      A,(VB1989)          ; LOAD THE MODE ?
+L0512   SRL     H                   ; DIVIDE H (X COORDINATE) BY 2.
+        SRL     L                   ; DIVIDE L (Y CCORDINATE) BY 2.
+        INC     A
+        RET     P                   ; RETURN FROM SCALE.
+        XOR     A                   ; SET A TO 0.
+        JP      L0512               ; 1504 - FF2 = 0512
+
+L051C:  PUSH    DE                  ; 
+        LD      D,(HL)
+        POP     HL
+        LD      E,(HL)
+        EX      DE,HL
+        RET                         ; RETURN FROM ???
+
+        ; **************
+        ; ***        ***
+        ; ***  DOT.  ***
+        ; ***        ***
+        ; **************
+    
+DOT:
+
+L0522:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        CALL    L0540               ; = 1532 - FF2 = 540
+        CPL
+        AND     (HL)
+        LD      E,A
+        LD      A,(VB1988)
+        INC     C
+        JP      M,L0538             ; = 152A - FF2 = 538
+        AND     A
+        JR      Z,L0538             ; $02
+        LD      A,$FF
+L0538:  AND     D
+        OR      E
+        LD      (HL),A              ; STORE PIXEL VALUES BAK INTO THE ADDRESSED SCREEN BUFFER BYTE.
+L053B:  POP     HL                  ; RECOVER REGISTER PAIR HL FROM THE STACK.
+        POP     DE                  ; RECOVER REGISTER PAIR DE FROM THE STACK.
+        POP     BC                  ; RECOVER REGISTER PAIR BC FROM THE STACK.
+        POP     AF                  ; RECOVER REGISTER PAIR AF FROM THE STACK.
+        RET                         ; RETURN FROM DOT.
+        
+L0540:  LD      A,(VB1989)
+        LD      C,A
+        LD      A,(VB1985)
+        INC     C
+        JP      M,L054D             ; = 153F - FF2 = 054D
+        PUSH    AF
+        RRA
+L054D:  CPL
+        LD      D,A
+        AND     $1F
+        LD      L,A
+        LD      A,D
+        AND     $20
+        JP      Z,L055B             ; 154E - FF2 = 055B
+        LD      A,$40
+        ADD     A,L
+L055B:  LD      L,A
+        LD      H,$00
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        EX      DE,HL
+        LD      HL,(VW1982)
+        ADD     HL,DE
+        LD      A,(VB1986)
+        INC     C
+        JP      M,L0570             ; 1562 - FF2 = 0570
+        PUSH    AF
+        RRA
+L0570:  LD      D,A
+        AND     $20
+        JP      Z,L057A             ; 156C - FF2 = 057A
+        LD      A,$02
+        ADD     A,H
+        LD      H,A
+L057A:  LD      A,D
+        AND     $1E
+        RRCA
+        LD      E,A
+        LD      A,D
+        LD      D,$00
+        ADD     HL,DE
+        RRA
+        LD      A,$0F               ; MASK BYTE?
+        JR      NC,L0589            ; $01
+        CPL
+L0589:  INC     C
+        JP      M,L05A4             ; 1596 - FF2 = 05A4
+        LD      D,A
+        POP     AF
+        AND     $01
+        LD      E,A
+        POP     AF
+        RRA
+        LD      A,$33               ; MASK BYTE.
+        JR      C,L0599             ; $01
+        CPL
+L0599:  AND     D
+        DEC     E
+        JR      Z,L05A2             ; $05
+        AND     $55                 ; MASK BYTE.
+        JP      L05A4               ; 1596 - FF2 = 05A4
+L05A2:  AND     $AA                 ; MASK BYTE.
+L05A4:  LD      D,A
+        RET
+        
+        ; ***************
+        ; ***         ***
+        ; ***  LINE.  ***
+        ; ***         ***
+        ; ***************
+   
+LINE:
+ 
+L05A6:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        LD      (VW1980),HL         ; SAVE THE UNSCALED X AND Y COORDINATES AWAY.
+        CALL    SCALE               ; SCALE THE X AND Y COORDINATES SUPPLIED IN HL (END OF VECTOR).
+L05B0:  LD      A,(VB1986)
+        CP      H
+        JP      C,L05BD             ; 15AF - FF2 = 05BD
+        SUB     H
+        LD      B,$00
+        JP      L05C2               ; 15B4 - FF2 = 05C2
+        
+L05BD:  NEG
+        ADD     A,H
+        LD      B,$04
+L05C2:  LD      D,A
+        LD      A,(VB1985)
+        CP      L
+        JP      C,L05CF             ; 15C1 - FF2 = 05CF
+        SUB     L
+        LD      E,A
+        JP      L05D7               ; 15C9 - FF2 = 05D7
+L05CF:  NEG
+        ADD     A,L
+        LD      E,A
+        LD      A,$02
+        ADD     A,B
+        LD      B,A
+L05D7:  LD      A,D
+        CP      E
+        JP      NC,L05DF            ; 15D1 - FF2 = 05DF
+        LD      D,E
+        LD      E,A
+        INC     B
+L05DF:  LD      L,$00
+        LD      H,D
+        PUSH    HL
+        LD      H,L
+        PUSH    HL
+        LD      L,E
+        LD      (VW198A),HL
+        LD      A,D
+        CPL
+        LD      L,A
+        LD      H,$FF
+        INC     HL
+        LD      (VW198C),HL
+        SCF
+        RR      H
+        RR      L
+        PUSH    HL
+        LD      HL,L08A1            ; 1893 - FF2 = 08A1.
+        LD      A,B
+        RLCA
+        RLCA
+        LD      E,A
+        LD      D,$00
+        ADD     HL,DE
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        EX      DE,HL
+        LD      (VW198E),HL
+        EX      DE,HL
+        INC     HL
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        EX      DE,HL
+        LD      (VW1990),HL
+L0612:  CALL    DOT                 ; 1514 - FF2 = 0522
+        POP     BC
+        POP     DE
+        POP     HL
+        LD      A,L
+        CP      H
+        JP      NC,L053B            ; 152D - FF2 = 053B
+        INC     L
+        PUSH    HL
+        LD      HL,(VW198A)
+        ADD     HL,DE
+        PUSH    HL
+        ADD     HL,BC
+        JP      C,L062F             ; 1621 - FF2 = 062F
+        PUSH    BC
+        LD      HL,(VW198E)
+        JP      L0637               ; 1629 - FF2 = 0637
+L062F:  LD      HL,(VW198C)
+        ADD     HL,BC
+        PUSH    HL
+        LD      HL,(VW1990)
+L0637:  EX      DE,HL
+        LD      HL,V1985
+        LD      A,D
+        ADD     A,(HL)
+        LD      (HL),A
+        INC     HL
+        LD      A,E
+        ADD     A,(HL)
+        LD      (HL),A
+        JP      L0612               ; 1604 - FF2 = 0612
+        
+L0645:  PUSH    AF
+        PUSH    BC
+        PUSH    DE
+        PUSH    HL
+        JP      L05B0               ; 15A2 - FF2 = 05B0
+        
+        ; ***************
+        ; ***         ***
+        ; ***  CHAR.  ***
+        ; ***         ***
+        ; ***************
+        ;
+        ; Display a character (as defined within register A).
+   
+CHAR:
+
+L064C:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        LD      BC,L053B            ; ACTUALLY A RETURN ADDRESS! (152D - FF2 = 053B).
+        PUSH    BC                  ; PUSH THE RETURN ADDRESS ONTO THE STACK.
+        AND     $7F                 ; CONVERT THE CHARACTER IN REGISTER A INTO A 7-BIT ASCII CHARACTER.
+        CP      $20                 ; COMPARE THE CHARACTER TO THE CODE FOR AN ASCII SPACE.
+        LD      HL,V1986            ; POINT HL AT THE CURRENT SCALED X COORDINATE.
+        JP      C,L06E6             ; PROCESS A CONTROL CHARACTER IF IT IS THE RANGE $00 TO $1F. (16D8 - FF2 = 06E6). 
+        CP      $60                 ; IS THE CHARACTER LOWER CASE?
+        JP      C,L0665             ; JUMP IF NOT. (1657 - FF2 = 0665).
+        AND     $5F                 ; CONVERT LOWER CASE CHARACTERS INTO UPPER CASE CHARACTERS.
+L0665:  LD      HL,(VW1985)         ; LOAD THE CURRENT SCALED CURSOR POSITION INTO HL (X AND Y COORDINATES).
+        EX      DE,HL               ; REGISTER PAIR DE HAS THE DESIRED POSITION OF THE CHARACTER.
+        LD      HL,L08C1            ; CHARACTER SET BITMAP TABLE. (18B3 - FF2 = 08C1).
+        SUB     $20                 ; THE CHARACTER TABLE STARTS AT A SPACE.
+        LD      C,A                 ; BC = CHARACTER CODE.
+        LD      B,0                 ; "  "  "  "  "  "  "
+        ADD     HL,BC               ; POINT HL AT THE DATA FOR THE SPECIFIED CHARACTER CODE.
+        ADD     HL,BC               ; ... EACH CHARACTER IS STORED AS THREE (3) DATA BYTES.
+        ADD     HL,BC               ; ...
+        LD      A,(VB1987)          ; LOAD THE CURRENT FONT SETTING (FIXED WIDTH OR PROPORTIONAL)...
+        LD      B,A                 ; ... INTO REGISTER B.
+        LD      A,(HL)              ; LOAD FIRST BYTE OF CHARACTER BITMAP.
+        AND     $03                 ; CHECK THE TWO LOWER BITS.
+        CP      $03                 ; IF BOTH BITS ARE SET - IT IS A 5-LINE CHARACTER.
+        JP      Z,L06BA             ; GO PROCESS A 5-LINE CHARACTER. (16AC - FF2 = 06BA).
+        ;
+        ; NOT A 5-LINE CHARACTER.
+        ;
+        LD      C,D                 ; ACQUIRE SCALED X COORDINATE OF DESIRED POSITION (AS SAVED IN DE).
+        ADD     A,$03               ; REGISTER A CONTAINS 0, 1 OR 2. ADD +3 TO IT, MAKING A WIDTH OF 3, 4 OR 5.
+        AND     B                   ; MERGE WITH THE FONT SETTING. $00 = FIXED WIDTH (RESULT SHOULD BE ZERO). CONSTRAINED IN RANGE $00 TO $0F ($0F = PROPORTIONAL).
+        JP      NZ,L0689            ; JUMP IF NON ZERO = PROPORTIONAL. (167B - FF2 = 0689).
+        ;
+        ; FIXED WIDTH FONT.
+        ;
+L0687:  LD      A,6                 ; 6 PIXELS WIDE FOR A FIXED WIDTH FONT.
+L0689:  ADD     A,D                 ; A ::= A + SCALED X COORDINATE OF DESIRED POSITION.
+L068A:  LD      D,A                 ; STORE IT BACK INTO D (UPDATE X COORDINATE TO THE NEXT CHARACTER POSITION).
+        PUSH    DE                  ; SAVE THE NEXT CHARACTER POSITION ONTO THE STACK.
+        LD      D,C                 ; REGISTER C STILL HOLDS THE CHARACTER CODE WE ARE CURRENTLY PROCESSING. GET IT TO REGISTER D. 
+        LD      A,(HL)              ; LOAD FIRST BYTE OF CHARACTER BITMAP (AGAIN).
+        RLCA                        ; MOVE THE 'DESCENDER FLAG BIT' INTO THE CARRY FLAG. ALSO SHIFT REGISTER A LEFT BY ONE BIT TO ACQUIRE THE FIRST PIXEL IN THE MOST SIGNIFICANT BIT OF REGISTER A.
+        JP      NC,L0694            ; JUMP IF THIS CHARACTER DOES NOT REQUIRE A DESCENDER. (1686 - FF2 = 0694).
+        DEC     E                   ; Y ::= Y - 1.
+        DEC     E                   ; Y ::= Y - 1.
+L0694:  EX      DE,HL               ; DE NOW HAS THE BITMAP POINTER AND HL HAS THE X AND Y COORDINATES OF THE FIRST SET OF BITS TO DISPLAY.
+        CALL    L06A3               ; DRAW TWO LINES OF THE CHARACTER CELL (FROM THE BOTTOM UPWARDS). (1695 - FF2 = 06A3).
+        CALL    L06A3               ; DRAW ANOTHER TWO LINES OF THE CHARACTER CELL (FROM THE BOTTOM UPWARDS). (1695 - FF2 = 06A3).
+        CALL    L06A8               ; DRAW THE LAST LINE OF THE CHARACTER CELL. (169A - FF2 = 06A8).
+        POP     HL                  ; RECOVER THE NEXT CHARACTER POSITION FROM THE STACK.
+        LD      (VW1985),HL         ; UPDATE THE SCALED X AND Y CURSOR COORDINATES.
+        RET                         ; RETURN
+        
+        ; DISPLAY TWO LINES OF THE CHARACTER (FROM THE BOTTOM UPWARDS).
+        ; THE FIRST CALL OF L06A8) ASSUMES THE PIXELS ARE ALREAD IN REGISTER A (MOST SIGNIFICANT FOUR BITS) SHIFTED OUT TO THE LEFT.
+        ; THE 'FALL THROUGH' CASE FETCHES A NEW BYTE (8 PIXELS OF DATA) AND DISPLAYS FOUR OF THE PIXELS ONLY.
+        ; A SUBSEQUENT CALL WILL OUTPUT THE REMAINING FOUR BITS ETC.
+        ;
+L06A3:  CALL    L06A8               ; RECURSIVE CALL TO DRAW A LINE OF PIXELS. (169A - FF2 = 06A8).
+        INC     DE                  ; ADVANCE DE TO POINT TO THE NEXT/LAST LINE OF PIXELS.
+        LD      A,(DE)              ; PICK UP THE NEXT GROUP OF PIXELS FORMING THE CHARACTER FROM THE CHARACTER BITMAP TABLE. 
+L06A8:  LD      B,$04               ; WIDTH ::= 4 PIXELS.
+        PUSH    HL                  ; SAVE X AND Y COORDINATES ONTO THE STACK.
+L06AB:  RLCA                        ; MOVE MOST SIGNIFICANT PIXEL OF REGISTER A INTO THE CARRY FLAG AND SHIFT ALL OF THE REMAINING PIXELS LEFT IN REGISTER A.
+        LD      (VW1985),HL         ; STORE THE SCALED CURRENT X AND Y COORDINATES OF THIS PIXEL.
+        CALL    C,DOT               ; IF THE CARRY FLAG IS SET, GO AND ILLUMINATE A PIXEL IN THE CURRENTLY DEFINED COLOUR. (1514 - FF2 = 0522 = DOT).
+        INC     H                   ; X ::= X + 1.
+        DEC     B                   ; WIDTH := WIDTH - 1.
+        JP      NZ,L06AB            ; LOOP IF MORE PIXELS TO PROCESS. (169D - FF2 = 06AB).
+        POP     HL                  ; RECOVER THE ORIGINAL COORDINATES FROM THE STACK.
+        INC     L                   ; Y ::= Y + 1.
+        RET                         ; RETURN..
+        
+        ; PROCESS A 5-LINE CHARACTER.
+        ;
+L06BA:  LD      A,(HL)              ; LOAD FIRST BYTE OF CHARACTER BITMAP (AGAIN).
+        PUSH    DE                  ; SAVE THE DESIRED X Y COORDINATES OF THE CHARACTER ONTO THE STACK.
+        AND     $04                 ; LOOK AT THE 'M'/'W' CHARACTER FLAG.
+        JP      NZ,L06D8            ; JUMP IF FLAG SET (NOT AN 'M' OR A 'W' CHARACTER). (16CA - FF2 = 06D8).
+        ;
+        ; WE ARE DISPLAYING AN 'M' OR A 'W' CHARACTER.
+        ;
+        CPL                         ; REGISTER A IS ZERO HERE (BY COINCIDENCE) SO COMPLEMENT IT TO $FF... 
+        ;
+        ; DRAW A VERTICAL LINE OF PIXELS IN THE CURRENTLY SELECTED COLOUR.
+        ;
+L06C2:  LD      B,5                 ; FIVE (5) PIXELS TO PROCESS.
+L06C4:  RLCA                        ; MOST SIGNIFICANT BIT OF REGISTER 'A' INTO THE CARRY FLAG.
+        EX      DE,HL               ; SWAP HL AND DE AROUND.
+        LD      (VW1985),HL         ; STORE THE CURRENT SCALED X AND Y COORDINATES OF THE DESIRED PIXEL.
+        CALL    C,DOT               ; IF THE PIXEL IS SET, DRAW A LIT PIXEL IN THE CURRENTLY SELECTED COLOUR. (1514 - FF2 = 0522 = DOT).
+        EX      DE,HL               ; SWAP HL AND DE BACK.
+        INC     E                   ; Y ::= Y + 1.
+        DEC     B                   ; ONE MORE PIXEL PROCESSED, SO ONE LESS TO DO.
+        JP      NZ,L06C4            ; JUMP IF MORE PIXELS TO PROCESS. (16B6 - FF2 = 06C4).
+        POP     DE                  ; RESTORE THE DESIRED X Y COORDINATES OF THE CHARACTER FROM THE STACK.                
+        LD      C,D                 ; C ::= X COORDINATE.
+        INC     C                   ; X ::= X + 1.
+        JP      L0687               ; CONTINUE... (1679 - FF2 = 0687).
+        
+        ; THESE CHARACTERS REQUIRE AN ADDITIONAL LINE OF PIXELS FROM AN AUXILIARY TABLE.
+        ;
+L06D8:  PUSH    HL                  ; SAVE HL (BITMAP POINTER) ONTO THE STACK.
+        LD      HL,L0981-3          ; HL POINTS TO THE AUXILIARY BITMAP TABLE. NOTE THAT THIS POINTER IS 'OFFSET' SO WHEN THE CHARACTER IS ADDED IT INDEXES THE CORRECT DATA...
+        LD      B,$00               ; REGISTER C STILL CONTAINS THE CHARACTER WE ARE DISPLAYING. SET REGISTER B TO 0 TO FORM A 16-BIT NUMBER.
+        ADD     HL,BC               ; MOVE THE POINTER IN HL TO THE CORRECT ENTRY WITHIN THE AUXILIARY TABLE FOR THE CURRENT CHARACTER. 
+        LD      A,(HL)              ; PICK UP THE PIXELS FROM THE AUXILIARY TABLE
+        POP     HL                  ; RECOVER THE BITMAP POINTER FROM THE STACK.
+        JP      L06C2               ; CONTINUE... DISPLAY THE 5-PIXELS. (16B4 - FF2 = 06C2).
+        
+L06E4:  LD      A,$01               ; REGISTER A = $01 = MAXIMUM COLOUR MODE (64 X 64).
+        ;
+        ; PROCESS A CONTROL CHARACTER.
+        ;
+L06E6:  CP      $03                 ; IS THE CONTROL CHARACTER EQUAL TO 3 (64 X 64 IN COLOUR)?
+        JP      Z,L06E4             ; IF SO, RELOAD A WITH THE CODE $01. (16D6 - FF2 = 06E4).
+        JP      C,L06F4             ; 16E6 - FF2 = 06F4.
+        DEC     A
+        CP      $03
+        JP      NZ,L0712            ; 1704 - FF2 = 0712.
+L06F4:  RRCA
+        LD      (VB1989),A
+L06F8:  LD      E,A
+        LD      A,(VB1988)
+        AND     $0F
+        OR      $20
+        DEC     E
+        JP      M,L0706             ; 16F8 - FF2 = 0706.
+        OR      $10
+L0706:  INC     E
+        JP      M,L070C             ; 16FE - FF2 = 070C.
+        OR      $40
+L070C:  LD      (VB197D),A
+        OUT     (DAZ0F),A
+        RET
+        
+L0712:  SUB     $04
+        JP      NZ,L0736            ; 1728 - FF2 = 0736.
+        ;
+        ; CONTROL CHARACTER = $05 = SELECT PICTURE BUFFER #1.
+        ;
+L0717:  IN      A,(DAZ0E)
+        AND     DAZEOF
+        JP      Z,L0717             ; 1709 - FF2 = 0717
+        LD      HL,V1984            ; ANIM FLAG ADDRESS?
+        XOR     A                   ; REGISTER A = 0.
+        LD      (HL),A              ; ANIM FLAG? = $00.
+        DEC     HL
+        LD      A,(VB1978)
+        LD      (HL),A
+        SCF
+        RRA
+        LD      C,A
+L072B:  IN      A,(DAZ0E)
+        AND     DAZEOF
+        JP      NZ,L072B            ; 171D - FF2 = 072B.
+        LD      A,C
+        JP      L0765               ; CONTINUE... (1757 - FF2 = 0765).
+        
+L0736:  DEC     A
+        JP      NZ,L075C            ; 174E - FF2 = 075C.
+        ;
+        ; CONTROL CHARACTER = $06 = SELECT PICTURE BUFFER #2.
+        ;
+L073A:  IN      A,(DAZ0E)
+        AND     DAZEOF
+        JP      Z,L073A             ; 172C - FF2 = 073A
+        LD      HL,V1984            ; ANIM FLAG ADDRESS?
+        LD      A,$FF               ; REGISTER A = $FF.
+        LD      (HL),A              ; ANIM FLAG? = $FF.
+        DEC     HL
+        LD      A,(VB1978)
+        ADD     A,$08
+        LD      (HL),A
+        SCF
+        RRA
+        LD      C,A
+L0751:  IN      A,(DAZ0E)
+        AND     DAZEOF
+        JP      NZ,L0751            ; 1743 - FF2 = 0751.
+        LD      A,C
+        JP      L0765               ; CONTINUE... (1757 - FF2 = 0765).
+        
+L075C:  DEC     A
+        JP      NZ,L076B            ; 175D - FF2 = 076B.
+        ;
+        ; CONTROL CHARACTER = $07 = TOGGLE DAZZLER ON / OFF.
+        ;
+        LD      A,(VB197C)          ; LOAD THE CURRENT (SAVED) VALUE OF DAZZLER REGISTER $0E.
+        XOR     $80                 ; TOGGLE THE MOST SIGNIFICANT BIT (DAZZLER ON/OFF).
+L0765:  LD      (VB197C),A          ; STORE THE UPDATED VALUE AWAY.
+        OUT     (DAZ0E),A           ; WRITE THE UPDATED VALUE TO THE DAZZLER I/O REGISTER. 
+        RET                         ; RETURN.
+        
+L076B:  DEC     A
+        JP      NZ,L0774            ; 1766 - FF2 = 0774.
+        ;
+        ; CONTROL CHARACTER = $08 = BACKSPACE.
+        ;
+        LD      A,(HL)              ; LOAD CURRENT SCALED X COORDINATE.
+        SUB     $06                 ; X ::= X - 6.
+        LD      (HL),A              ; STORE UPDATED SCALED X COORDINATE.
+        RET                         ; RETURN.
+        
+L0774:  DEC     A
+        JP      NZ,L077F            ; 1771 - FF2 = 077F.
+        ;
+        ; CONTROL CHARACTER = $09 = HORIZONTAL TAB.
+        ;
+        LD      A,(HL)              ; LOAD CURRENT SCALED X COORDINATE.
+        ADD     A,32                ; X ::= X + 32. (32 = $20).
+        AND     $E0                 ; MOD 32?
+        LD      (HL),A              ; STORE UPDATED SCALED X COORDINATE.
+        RET                         ; RETURN.
+        
+L077F:  DEC     A
+        JP      NZ,L0789            ; 177B - FF2 = 0789.
+        ;
+        ; CONTROL CHARACTER = $0A = LINE FEED..
+        ;
+        DEC     HL                  ; ADJUST HL TO POINT TO THE CURRENT SCALED Y COORDINATE.
+        LD      A,(HL)              ; LOAD CURRENT SCALED Y COORDINATE.
+        SUB     $08                 ; Y ::= Y - 8.
+        LD      (HL),A              ; STORE UPDATED SCALED Y COORDINATE.
+        RET                         ; RETURN.
+        
+L0789:  DEC     A
+        JP      NZ,L0795            ; 1787 - FF2 = 0795.
+        ;
+        ; CONTROL CHARACTER = $0B = VERTICAL TAB.
+        ;
+        DEC     HL                  ; ADJUST HL TO POINT TO THE CURRENT SCALED Y COORDINATE.
+        LD      A,(HL)              ; LOAD CURRENT SCALED Y COORDINATE.
+        AND     $E0                 ; MOD 32?
+        SUB     $06                 ; Y ::= Y - 6.
+        LD      (HL),A              ; STORE UPDATED SCALED Y COORDINATE.
+        RET                         ; RETURN.
+        
+L0795:  DEC     A
+        JP      NZ,L079E            ; 1790 - FF2 = 079E.
+        ;
+        ; CONTROL CHARACTER = $0C = FORM FEED.
+        ;
+        DEC     HL                  ; ADJUST HL TO POINT TO THE CURRENT SCALED Y COORDINATE.
+        LD      (HL),$7A            ; Y ::= -6?
+        INC     HL                  ; ADJUST HL TO POINT TO THE CURRENT SCALED X COORDINATE.
+        INC     A                   ; MODIFY CONTROL CODE FOR FALLING THROUGH TO EXECUTE THE CODE BELOW!
+        ;
+        ; FALL THROUGH...
+        ;
+L079E:  DEC     A
+        JR      NZ,L07A4            ; $03
+        ;
+        ; CONTROL CHARACTER = $0D = CARRIAGE RETURN. ALSO, CONTINUATION OF THE FORM FEED CODE ABOVE. 
+        ;
+        LD      (HL),$00            ; X ::= 0.
+        RET                         ; RETURN.
+        
+L07A4:  LD      HL,V1987            ; POINT HL AT THE FONT ADDRESS.
+        DEC     A
+        JP      NZ,L07AE            ; 17A0 - FF2 = 07AE.
+        ;
+        ; CONTROL CHARACTER = $0E = FIXED FONT.
+        ;
+        LD      (HL),$00            ; FONT = FIXED.
+        RET                         ; RETURN.
+        
+L07AE:  DEC     A
+        JP      NZ,L07B5            ; 17A7 - FF2 = 07B5.
+        ;
+        ; CONTROL CHARACTER = $0F = PROPORTIONAL FONT.
+        ;
+        LD      (HL),$0F            ; FONT = PROPORTIONAL.
+        RET                         ; RETURN.
+        
+L07B5:  DEC     A
+        INC     HL
+        INC     HL
+        JR      Z,L07C7             ; $0D
+        ;
+        ; CONTROL CHARACTER = 
+        ;
+        LD      E,(HL)
+        DEC     E
+        JP      M,L07C1             ; 17B3 - FF2 = 07C1.
+        XOR     $08
+L07C1:  LD      D,A
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        OR      D
+L07C7:  DEC     HL
+        LD      (HL),A
+        RET     Z
+        INC     HL
+        LD      A,(HL)
+        INC     A
+        RET     M
+        DEC     A
+        JP      L06F8               ; 16EA - FF2 = 06F8.
+        
+        ; *****************
+        ; ***           ***
+        ; ***  ANIMAT.  ***
+        ; ***           ***
+        ; *****************
+   
+ANIMAT:
+
+L07D2:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+L07D5:  IN      A,(DAZ0E)           ; READ THE DAZZLER STATUS BITS (D7 AND D6).
+        AND     DAZEOF              ; CHECK THE STATE OF THE END OF FRAME STATUS BIT (D6).
+        JR      Z,L07D5             ; WAIT FOR THE START OF THE FRAME. ($FA).
+        LD      HL,V1984            ; ANIM FLAG ADDRESS?
+        LD      A,(HL)              ; LOAD EXISTING VALUE OF ANIM FLAG?
+        CPL                         ; COMPLEMENT ($00 <> $FF).
+        LD      (HL),A              ; STORE NEW VALUE OF ANIM FLAG?
+        LD      B,A
+        DEC     HL
+        LD      A,(HL)
+        SCF
+        RRA
+        LD      C,A                 ; SAVE REGISTER A AWAY INTO REGISTER C.
+L07E7:  IN      A,(DAZ0E)           ; READ THE DAZZLER STATUS BITS (D7 AND D6).
+        AND     DAZEOF              ; CHECK THE STATE OF THE END OF FRAME STATUS BIT (D6).
+        JP      NZ,L07E7            ; WAIT FOR THE END OF THE FRAME. (17D9 - FF2 = 07E7).
+        LD      A,C                 ; RECOVER REGISTER A FROM REGISTER C.
+        LD      (VB197C),A          ; SAVE A COPY OF THE REGISTER LOCALLY FOR SUBSEQUENT USE.
+        OUT     (DAZ0E),A           ; WRITE REGISTER A TO DAZZLER PORT $0E.
+        LD      A,(HL)
+        ADD     A,$08
+        INC     B
+        JP      Z,L07FD             ; 17EF - FF2 = 07FD
+        SUB     $10
+L07FD:  LD      (HL),A
+        POP     HL                  ; RESTORE REGISTER PAIR HL FROM THE STACK.
+        POP     BC                  ; RESTORE REGISTER PAIR BC FROM THE STACK.
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK.
+        RET                         ; RETURN FROM ANIMAT.
+
+        ; ****************
+        ; ***          ***
+        ; ***  CYCLE.  ***
+        ; ***          ***
+        ; ****************
+   
+CYCLE:
+
+L0802:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        LD      A,(VB1989)          ; MODE?
+        RLCA
+        PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        INC     A
+        AND     $02
+        CALL    CHAR                ; 163E - FF2 = 064C = CHAR
+        LD      A,(VB1988)
+        PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK. <--------
+        LD      A,$1F               ; DESIRED MODE = ??? 
+L0814:  CALL    CHAR                ; CHAR. (163E - FF2 = 064C = CHAR).
+        PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK. <-----
+        LD      A,3                 ; DELAY = 0.3 SECONDS. ($03).                 |
+        CALL    PAUSE               ; PAUSE. (1828 - FF2 = 0836 = PAUSE).         |
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK. <--
+L081E:  DEC     A                   ; 
+        CP      $18                 ; 
+        JR      Z,L081E             ; $FB
+        CP      $10                 ;
+        JR      NZ,L0814            ; $ED
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK. <------
+        LD      (VB1988),A
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK.
+        CP      $03
+        JR      C,L0831             ; $01
+        INC     A
+L0831:  CALL    CHAR                ; 163E - FF2 = 064C = CHAR
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK.
+        RET                         ; RETURN FROM CYCLE.
+
+        ; ****************
+        ; ***          ***
+        ; ***  PAUSE.  ***
+        ; ***          ***
+        ; ****************
+
+        ; Pause for a time period defined within register A.
+        ;
+        ; This subroutine assumes that the Z80 CPU is running with a 4 MHz clock (i.e. it is a software delay).
+        ;
+        ; The value in register A is in units of tenths of a second.
+        ;
+        ; A value of   0 indicates NO delay (not the maximum).
+        ; A value of  20 indicates a delay of  2.0 seconds.
+        ; A value of 255 indicates a delay of 25.5 seconds (the maximum).
+        ;
+        ; Registers AF and BC are preserved across the call.
+        
+PAUSE:
+
+L0836:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        CP      $00                 ; CHECK FOR NO DELAY.
+        JR      Z,L0851             ; LOOKS LIKE A PAUSE OF ZERO! ($15)
+        LD      B,A                 ; GET THE REQUIRED DELAY INTO REGISTER B (THE COUNT REGISTER).
+L083D:  PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK. SAVE CURRENT DELAY COUNT.
+        ;
+        ; THE CODE FROM HERE ONWARDS SHOULD IMPLEMENT A 100 msec DELAY (0.1 s).
+        ;
+        LD      A,(VB197C)          ; DAZZLER STORED REGISTER $0E.
+        BIT     7,A                 ; TEST TO SEE IF THE DAZZLER IS ON OR OFF.
+        LD      B,93                ; ANOTHER (INTERNAL) DELAY COUNT. MIDDLE LOOP. $5D == 93.
+        JR      Z,L0849             ; TAKE THE JUMP IF THE DAZZLER IS OFF. THIS DOESN'T LOOK RIGHT TO ME! ($02). ???
+        LD      B,75                ; ANOTHER (INTERNAL) DELAY COUNT. INNER LOOP. $4B == 75. 
+L0849:  DEC     A                   ; WHY ARE WE DECREMENTING REGISTER A HERE? REGISTER A HAS THE DAZZLER STORED MODE! ???
+        JR      NZ,L0849            ; LOOP IF REGISTER A IS NON ZERO? ($FD).
+        DJNZ    L0849               ; DECREMENT REGISTER B AND LOOP OF REGISTER B IS NON ZERO. ($FB)
+        POP     BC                  ; RESTORE REGISTER PAIR BC FROM THE STACK. RECOVER CURRENT DELAY COUNT.
+        DJNZ    L083D               ; DECREMENT ONE FROM THE DELAY COUNT AND LOOP IF NON-ZERO. ($EC)
+        ;
+L0851:  POP     BC                  ; RESTORE REGISTER PAIR BC FROM THE STACK.
+        POP     AF                  ; RESTORE REGISTER PAIR AF FROM THE STACK.
+        RET                         ; RETURN FROM PAUSE.
+
+        ; ***************
+        ; ***         ***
+        ; ***  AREA.  ***
+        ; ***         ***
+        ; ***************
+        ;
+        ; Fill a rectangular area of the screen with the currently defined colour.
+        ;
+        ; One set of coordinates is defined by the current cursor position.
+        ;
+        ; The second set of coordinates is defined by register pair HL upon entery.
+        ;
+        ; Register H contains the desired X coordinate (in virtual space).
+        ; Register L contains the desired Y ccordinate (in virtual space).
+        ;
+        ; HL is scaled from virtual to physical space (based upon the current Dazzler mode).
+        ;
+        ; The ccordinates specified within HL should be the diagonally opposite corner of those
+        ; to the cursor position.
+        ;
+        ; On exit, the cursor position is updated to be the same as the coordinates specifed in the
+        ; call to this subroutine.
+   
+AREA:
+
+L0854:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+        PUSH    BC                  ; SAVE REGISTER PAIR BC ONTO THE STACK.
+        PUSH    DE                  ; SAVE REGISTER PAIR DE ONTO THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK.
+        LD      HL,(VW1980)         ; ACQUIRE THE CURRENT CURSOR (UNSCALED) COORDINATES.
+        LD      (VW197E),HL         ; SAVE AWAY FOR FURTHER USE...
+        POP     HL                  ; ACQUIRE THE USER-SPECIFIED UNSCALED COORDINATES FROM THE STACK.
+        PUSH    HL                  ; SAVE REGISTER PAIR HL ONTO THE STACK ONCE AGAIN.
+        LD      (VW1980),HL         ; SAVE THE UNSCALED COORDINATES.
+        CALL    SCALE               ; SCALE THE CORDINATES IN HL. (1501 - FF2 = 050F = SCALE).
+        PUSH    HL                  ; SAVE THE SCALED COORDINATES ONTO THE STACK.
+        EX      DE,HL               ; GET THE SCALED COORDINATES INTO DE.
+        LD      HL,(VW197E)         ; LOAD THE UNSCALED CURSOR COORDINATES INTO HL.
+        CALL    SCALE               ; SCALE THE COORDINATES IN HL. (1501 - FF2 = 050F = SCALE).
+        LD      A,H
+        CP      D
+        JR      C,L0876             ; $04
+        LD      C,A
+        LD      A,D
+        LD      H,A
+        LD      D,C
+L0876:  LD      A,L
+        CP      E
+        JR      C,L087E             ; $04
+        LD      C,A
+        LD      A,E
+        LD      L,A
+        LD      E,C
+L087E:  LD      A,E
+        SUB     L
+        LD      B,A
+        INC     B
+L0882:  LD      (VW1985),HL
+        PUSH    HL
+        LD      H,D
+        CALL    L0645               ; 1637 - FF2 = 0645 = ???
+        POP     HL
+        INC     L
+        DJNZ    L0882               ; $F4
+        POP     HL
+        LD      (VW1985),HL
+        JP      L053B               ; CONTINUE... RECOVER REGISTERS AND RETURN. (152D - FF2 = 053B).
+
+        ; *****************
+        ; ***           ***
+        ; ***  STRING.  ***
+        ; ***           ***
+        ; *****************
+        ;
+        ; Output a string of characters (using subroutine CHAR) pointed to by register pair HL.
+        ;
+        ; On entry, HL points to the first character of the string.
+        ;
+        ; The string of characters is terminated by bit 7 (the most significant bit) of the
+        ; last character being set.
+        ;
+        ; On exit, HL points to the next memory location AFTER the last character of the string
+        ; that has been processed.
+        
+STRING:
+
+L0895:  PUSH    AF                  ; SAVE REGISTER PAIR AF ONTO THE STACK.
+L0896:  LD      A,(HL)              ; ACQUIRE THE FIRST, NEXT OR LAST CHARACTER OF THE STRING.
+        CALL    CHAR                ; PROCESS IT... (163E - FF2 = 064C = CHAR).
+        INC     HL                  ; POINT TO THE NEXT OR LAST CHARACTER OF THE STRING.
+        BIT     7,A                 ; CHECK THE TOP BIT OF THE CHARACTER JUST PROCESSED.
+        JR      Z,L0896             ; LOOP IF NOT SET (THE STRING HAS MORE CHARACTERS TO PROCESS). ($@@).
+        POP     AF                  ; RECOVER REGISTER PAIR AF FROM THE STACK.
+        RET                         ; RETURN FROM STRING.
+        
+        ; *****************
+        ; ***           ***
+        ; ***  TABLES.  ***
+        ; ***           ***
+        ; *****************
+   
+;T1893:  ; 1893 - FF2 = 08A1. SOMETHING TO DO WITH LINE?
+L08A1:
+        ;  M0X, M0Y, M1X, M1Y. Indexed by sector weight.
+
+        DB  -1,   0,  -1,  -1 ; Sector weight 0.
+        DB   0,  -1,  -1,  -1 ; Sector weight 1.
+        DB  -1,   0,  -1,  +1 ; Sector weight 2.
+        DB   0,  +1,  -1,  +1 ; Sector weight 3.
+        DB  +1,   0,  +1,  -1 ; Sector weight 4.
+        DB   0,  -1,  +1,  -1 ; Sector weight 5.
+        DB  +1,   0,  +1,  +1 ; Sector weight 6.
+        DB   0,  +1,  +1,  +1 ; Sector weight 7.
+
+; This is the data table to generate the character text on the Dazzler screen.
+;
+; Each character, from an ASCII SPACE ' ' ($20) through to an ASCII UNDERLINE '_' ($5F) is stored 
+; as three (3) consecutive data bytes.
+;
+; Lower case characters are converted into upper case characters automatically.
+;
+; These three bytes are a collection of 20 bits - arranged as 20 pixel bits plus 4 control bits.
+;
+; The first data byte of the tripple contains the 4 control bits. The 3 bytes are organised as follows:
+;
+; CppppCCC pppppppp pppppppp
+;
+; Where 'C' is a control bit and 'p' is a pixel bit.
+;
+; The organisation of the control bits (ignoring the pixels (identifed as 'p')) are:
+;
+; DppppSWW
+;
+; Where:
+;
+; D indicates whether this character requires a descender or not (i.e. the character is drawn 2 pixels below where
+; the baseline would be for a non-descended character.
+;
+; D = 0 means no descender.
+; D = 1 means    descender required.
+;
+; WW indicates the proprtional width of the character.
+;
+; 00 = 0.
+; 01 = 1.
+; 10 = 2.
+; 11 = indicates this is a special '5-wide' character.
+;
+; If the WW value is 0, 1 or 2; then +3 is added to the value to give a proprtional character width of 3, 4 or 5 pixels respectively.
+;
+; If the use of a fixed width font is specified to the graphics library, then these width bits (ignoring the special case of '11')
+; are ignored.
+;
+; S is another special case. It is only relevant where WW is specified as '11' (i.e. a 5-wide character).
+;
+; The only characters that should be specified with WW='11' are characters '#', '$', '%', '&', 'M' and 'W'.
+;
+; I will cover the significance of this later.
+;
+; Next, let me describe the order of the pixels when converted from the character mapping to the screen. I will assign a
+; letter to each of the individual pixels within the three bytes and identify the position it occupies in the 4*5 matrix 
+; on the sceen:
+;
+; cABCDccc EFGHIJKL MNOPQRST (where the character 'c' indicates the position of a control bit).
+;
+; On the screen, thse pixels would appear as:
+;
+; QRST
+; MNOP
+; IJKL
+; EFGH
+; ABCD
+;
+; Notice that this grid is 4 wide by 5 high, containing 20 pixels in total.
+;
+; This is adequate to display most characters acceptably. However, there are a few exceptions. These exceptions
+; requiring a 5 wide character to be displayed (meaning 25 pixels are required in total). This is where the WW='11'
+; control bits come to our aide. This special control code identifies that an extra column of pixels are required:
+;
+; YQRST
+; XMNOP
+; WIJKL
+; VEFGH
+; UABCD
+;
+; So, where do these pixels come from I hear you ask?
+;
+; If WW='11' and S=0, then the pixels are all illuminated (i.e. '1').
+; If WW='11' and S=1, then the pixels are sourced from an auxiliary table.
+;
+; The former case is where we have the characters 'M' and 'W'. The initial leading edge of these characters in both
+; of these cases are all illuminated - hence a constant of $FF is used - although only the left-most 5 bits are
+; actually used.
+;
+; The later case is catered for by an extra table containing four bytes, one byte for each character as follows:
+;
+; UVWXY...
+;
+; Where a '.' is notially '0', but is really a don't care bit.
+;
+; Hence, you can now see where the additonal column of 5 pixels is sourced from for these special cases.
+;
+; This auxiliary table follows the main character set table below.
+;
+; Note that the table is actually offset slightly, so that when the biassed character code is added to the table pointer
+; it correctly indexes the correct byte within the table itself.
+
+;T18B3:  ; 18B3 - FF2 = 08C1. CHARACTER SET BITMAP.
+L08C1:
+
+        DB $02, $00, $00 ; $20 ' '. D=0, S=0, WW=10.
+        DB $40, $08, $88 ; $21 '!'. D=0, S=0, WW=00.
+        DB $01, $00, $aa ; $22 '"'. D=0, S=0, WW=01.
+        DB $57, $fa, $fa ; $23 '#'. D=0, S=1, WW=11.
+        DB $77, $5e, $4e ; $24 '$'. D=0, S=1, WW=11.
+        DB $1f, $b4, $a9 ; $25 '%'. D=0, S=1, WW=11.
+        DB $6f, $25, $cc ; $26 '&'. D=0, S=1, WW=11.
+        DB $00, $00, $88 ; $27 '''. D=0, S=0, WW=00.
+        DB $20, $88, $84 ; $28 '('. D=0, S=0, WW=00.
+        DB $40, $44, $48 ; $29 ')'. D=0, S=0, WW=00.
+        DB $01, $a4, $a0 ; $2A '*'. D=0, S=0, WW=01.
+        DB $01, $4e, $40 ; $2B '+'. D=0, S=0, WW=01.
+        DB $80, $88, $00 ; $2C ','. D=1, S=0, WW=00.
+        DB $01, $0e, $00 ; $2D '-'. D=0, S=0, WW=01.
+        DB $40, $00, $00 ; $2E '.'. D=0, S=0, WW=00.
+        DB $42, $42, $10 ; $2F '/'. D=0, S=0, WW=10.
+        DB $32, $db, $96 ; $30 '0'. D=0, S=0, WW=10.
+        DB $71, $44, $4c ; $31 '1'. D=0, S=0, WW=01.
+        DB $7a, $42, $96 ; $32 '2'. D=0, S=0, WW=10.
+        DB $72, $16, $1e ; $33 '3'. D=0, S=0, WW=10.
+        DB $0a, $1f, $99 ; $34 '4'. D=0, S=0, WW=10.
+        DB $72, $1e, $8f ; $35 '5'. D=0, S=0, WW=10.
+        DB $32, $9e, $86 ; $36 '6'. D=0, S=0, WW=10.
+        DB $42, $42, $1f ; $37 '7'. D=0, S=0, WW=10.
+        DB $32, $96, $96 ; $38 '8'. D=0, S=0, WW=10.
+        DB $72, $17, $96 ; $39 '9'. D=0, S=0, WW=10.
+        DB $40, $08, $00 ; $3A ':'. D=0, S=0, WW=00.
+        DB $80, $88, $08 ; $3B ';'. D=1, S=0, WW=00.
+        DB $11, $48, $42 ; $3C '<'. D=0, S=0, WW=01.
+        DB $01, $e0, $e0 ; $3D '='. D=0, S=0, WW=01.
+        DB $41, $42, $48 ; $3E '>'. D=0, S=0, WW=01.
+        DB $22, $02, $96 ; $3F '?'. D=0, S=0, WW=10.
+        DB $62, $bb, $9f ; $40 '@'. D=0, S=0, WW=10.
+        DB $4a, $f9, $96 ; $41 'A'. D=0, S=0, WW=10.
+        DB $72, $9e, $9e ; $42 'B'. D=0, S=0, WW=10.
+        DB $32, $98, $96 ; $43 'C'. D=0, S=0, WW=10.
+        DB $72, $99, $9e ; $44 'D'. D=0, S=0, WW=10.
+        DB $7a, $8e, $8f ; $45 'E'. D=0, S=0, WW=10.
+        DB $42, $8e, $8f ; $46 'F'. D=0, S=0, WW=10.
+        DB $32, $9b, $86 ; $47 'G'. D=0, S=0, WW=10.
+        DB $4a, $9f, $99 ; $48 'H'. D=0, S=0, WW=10.
+        DB $71, $44, $4e ; $49 'I'. D=0, S=0, WW=01.
+        DB $32, $91, $11 ; $4A 'J'. D=0, S=0, WW=10.
+        DB $4a, $ac, $a9 ; $4B 'K'. D=0, S=0, WW=10.
+        DB $7a, $88, $88 ; $4C 'L'. D=0, S=0, WW=10.
+        DB $0b, $55, $b1 ; $4D 'M'. D=0, S=0, WW=11.
+        DB $4a, $9b, $d9 ; $4E 'N'. D=0, S=0, WW=10.
+        DB $32, $99, $96 ; $4F 'O'. D=0, S=0, WW=10.
+        DB $42, $8e, $9e ; $50 'P'. D=0, S=0, WW=10.
+        DB $3a, $b9, $96 ; $51 'Q'. D=0, S=0, WW=10.
+        DB $4a, $ae, $9e ; $52 'R'. D=0, S=0, WW=10.
+        DB $72, $16, $87 ; $53 'S'. D=0, S=0, WW=10.
+        DB $12, $22, $2f ; $54 'T'. D=0, S=0, WW=10.
+        DB $32, $99, $99 ; $55 'U'. D=0, S=0, WW=10.
+        DB $32, $69, $99 ; $56 'V'. D=0, S=0, WW=10.
+        DB $0b, $b5, $51 ; $57 'W'. D=0, S=0, WW=11.
+        DB $4a, $66, $99 ; $58 'X'. D=0, S=0, WW=10.
+        DB $22, $26, $99 ; $59 'Y'. D=0, S=0, WW=10.
+        DB $7a, $84, $2f ; $5A 'Z'. D=0, S=0, WW=10.
+        DB $60, $88, $8c ; $5B '['. D=0, S=0, WW=00.
+        DB $02, $12, $48 ; $5C '\'. D=0, S=0, WW=10.
+        DB $60, $44, $4c ; $5D ']'. D=0, S=0, WW=00.
+        DB $02, $00, $96 ; $5E '^'. D=0, S=0, WW=10.
+        DB $f8, $00, $00 ; $5F '_'. D=1, S=0, WW=00.
+
+;T1970:  ; 1970 - FF2 = 097E. AUXILIARY CHARACTER TABLE (OFFSET ZERO - CHARACTER CODE $20).
+;L097E:
+
+L0981:
+        DB $50 ; $23 '#'
+        DB $10 ; $24 '$'
+        DB $98 ; $25 '%'
+        DB $60 ; $26 '&'
+
+; ==============================================================================
+
+; V1978 - L0986: HIGH BYTE OF START OF SCREEN BUFFER ADDRESS.
+; V1979 - L0987: 
+; V1979 - L0988: 
+; V197A - L0989: 
+; V197B - L098A: 
+; V197C - L098B: COPY OD THE DAZZLER CONTROL REGISTER (I/O PORT $0E).
+; V197D - L098C: COPY OF THE DAZZLER MODE    REGISTER (I/O PORT $0F). SEEMS TO BE WRITE ONLY?
+; V197E - L098D: 
+; V197F - L098E: 
+; V1980 - L098F: UNSCALED COORDINATES (LOW  BYTE) = Y COORDINATE. 
+; V1981 - L0990: UNSCALED COORDINATES (HIGH BYTE) = X COORDINATE.
+; V1982 - L0991: START OF SCREEN BUFFER (LOW BYTE).
+; V1983 - L0991: START OF SCREEN BUFFER (HIGH BYTE).
+; V1984 - L0992: ANIM FLAG? INDICATES BUFFER BEING FILLED?
+; V1985 - L0993: SCALED COORDINATES (LOW  BYTE) = Y COORDINATE. 
+; V1986 - L0994: SCALED COORDINATES (HIGH BYTE) = X COORDINATE.
+; V1987 - L0995: FONT. $00 = FIXED WIDTH. $0F = PROPORTIONAL.
+; V1988 - L0996: 
+; V1989 - L0997: 
+; V198A - L0998: 
+; V198B - L0999: 
+; V198C - L099A: 
+; V198D - L099B: 
+; V198E - L099C: 
+; V198F - L099D: 
+; V1990 - L099E: 
+
+
+VB1978: DS      1                   ; HIGH BYTE OF START OF SCREEN BUFFER ADDRESS.
+VB197B: DS      1
+VB197C: DS      1
+VB197D: DS      1
+VW197E: DS      2
+VW1980: DS      2                   ; UNSCALED COORDINATES (X AND Y).
+VW1982: DS      2                   ; START OF SCREEN BUFFER ADDRESS (16-BIT ADDRESS). 
+VW1985: DS      2                   ; SCALED COORDINATES (X AND Y).
+VW198A: DS      2
+VW198C: DS      2
+VW198E: DS      2
+VW1990: DS      2
+V1984:
+V1985:
+VB1985: DS      1
+V1986:
+VB1986: DS      1
+V1987:
+VB1987: DS      1
+VB1988: DS      1
+VB1989: DS      1                   ; DISPLAY MODE?
+
+        END
+        
+        
